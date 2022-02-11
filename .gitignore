@@ -1,0 +1,6 @@
+# vim stuff
+*~
+Session.vim
+*.swp
+*.o
+nfcapdu
