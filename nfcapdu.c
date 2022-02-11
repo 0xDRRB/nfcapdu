@@ -6,9 +6,30 @@
 #include <errno.h>
 #include <readline/readline.h>
 #include <readline/history.h>
+#include <nfc/nfc.h>
+
+#include "color.h"
+#include "nfcapdu.h"
+#include "statusres.h"
 
 #define HISTFILE    ".nfcapdu_history"
 #define HISTSIZE    128
+#define RAPDUMAXSZ  512
+#define CAPDUMAXSZ  512
+
+nfc_device *pnd;
+nfc_context *context;
+
+static void sighandler(int sig)
+{
+    printf("Caught signal %d\n", sig);
+    if(pnd != NULL) {
+        nfc_abort_command(pnd);
+        nfc_close(pnd);
+    }
+    nfc_exit(context);
+    exit(EXIT_FAILURE);
+}
 
 int blankline(char *line)
 {
@@ -72,24 +93,263 @@ void apdu_addhistory(char *line) {
 		add_history(line);
 }
 
+// Transmit ADPU from hex string
+int strcardtransmit(nfc_device *pnd, const char *line, uint8_t *rapdu, size_t *rapdulen)
+{
+    int res;
+    size_t szPos;
+	uint8_t *capdu = NULL;
+	size_t capdulen = 0;
+	*rapdulen = RAPDUMAXSZ;
+
+	uint32_t temp;
+	int indx = 0;
+	char buf[5] = {0};
+
+	uint16_t status;
+
+	// linelen >0 & even
+	if(!strlen(line) || strlen(line) > CAPDUMAXSZ*2)
+		return(-1);
+
+	if(!(capdu = malloc(strlen(line)/2))) {
+		fprintf(stderr, "malloc list error: %s\n", strerror(errno));
+		nfc_close(pnd);
+		nfc_exit(context);
+		exit(EXIT_FAILURE);
+	}
+
+    while (line[indx]) {
+        if(line[indx] == '\t' || line[indx] == ' ') {
+            indx++;
+            continue;
+        }
+
+        if(isxdigit(line[indx])) {
+            buf[strlen(buf) + 1] = 0x00;
+            buf[strlen(buf)] = line[indx];
+        } else {
+            // if we have symbols other than spaces and hex
+			free(capdu);
+            return(-1);
+        }
+
+        if(strlen(buf) >= 2) {
+            sscanf(buf, "%x", &temp);
+            capdu[capdulen] = (uint8_t)(temp & 0xff);
+            *buf = 0;
+            capdulen++;
+        }
+        indx++;
+    }
+
+	// error if partial hex bytes
+	if(strlen(buf) > 0) {
+		free(capdu);
+		printf("Invalid hex string!\n");
+		return(-1);
+	}
+
+	printf(YELLOW "=> " );
+	for (szPos = 0; szPos < capdulen; szPos++) {
+		printf("%02x ", capdu[szPos]);
+	}
+	printf(RESET "\n");
+
+    if((res = nfc_initiator_transceive_bytes(pnd, capdu, capdulen, rapdu, *rapdulen, -1)) < 0) {
+        printf("nfc_initiator_transceive_bytes error! %s\n", nfc_strerror(pnd));
+		*rapdulen = 0;
+        return(-1);
+    }
+
+	if(capdu) free(capdu);
+
+	status = (rapdu[res-2] << 8) | rapdu[res-1];
+
+	if(status == S_SUCCESS) {
+		printf(GREEN "<= ");
+	} else {
+		printf(RED "<= ");
+	}
+
+	for (szPos = 0; szPos < res; szPos++) {
+		printf("%02x ", rapdu[szPos]);
+	}
+	printf(RESET "\n");
+
+	if(status != S_SUCCESS) {
+		printf("Error: %s (0x%04x)\n", strstatus(status), status);
+		return(-1);
+	}
+
+	*rapdulen = (size_t)res;
+
+	return(0);
+}
+
+int listdevices() {
+	size_t device_count;
+	nfc_connstring devices[8];
+
+	// Scan readers/devices
+	device_count = nfc_list_devices(context, devices, sizeof(devices)/sizeof(*devices));
+	if(device_count <= 0) {
+		fprintf(stderr, "Error: No NFC device found\n");
+		return(0);
+	}
+
+	printf("Available readers/devices:\n");
+	for(size_t d = 0; d < device_count; d++) {
+		printf("  %lu: ", d);
+		if(!(pnd = nfc_open (context, devices[d]))) {
+			printf("nfc_open() failed\n");
+		} else {
+			printf("%s (connstring=\"%s\")\n", nfc_device_get_name(pnd), nfc_device_get_connstring(pnd));
+			nfc_close(pnd);
+		}
+	}
+	return(device_count);
+}
+
+static void print_hex(const uint8_t *pbtData, const size_t szBytes)
+{
+	size_t  szPos;
+
+	for(szPos = 0; szPos < szBytes; szPos++) {
+		printf("%02X", pbtData[szPos]);
+	}
+}
+
+void failquit()
+{
+	if(pnd) nfc_close(pnd);
+	if(context) nfc_exit(context);
+	exit(EXIT_SUCCESS);
+}
+
+void printhelp(char *binname)
+{
+	printf("NFCapdu v0.0.1\n");
+	printf("Copyright (c) 2022 - Denis Bodor\n\n");
+	printf("Usage : %s [OPTIONS]\n", binname);
+	printf(" -l              list available readers\n");
+	printf(" -d connstring   use this device (default: use the first available device)\n");
+	printf(" -v              verbose mode\n");
+	printf(" -h              show this help\n");
+}
+
 int main(int argc, char**argv)
 {
 	char *in;
 	char *fhistory;
+
+	nfc_target nt;
+	const nfc_modulation mod = {
+		.nmt = NMT_ISO14443A,
+		.nbr = NBR_106
+	};
+
+	// TODO config file or cmd
+	uint8_t resp[RAPDUMAXSZ] = {0};
+	size_t respsz = RAPDUMAXSZ;
+
+	int retopt;
+	int optlistdev = 0;
+	char *optconnstring = NULL;
+
+	while((retopt = getopt(argc, argv, "hld:")) != -1) {
+		switch (retopt) {
+			case 'l':
+				optlistdev = 1;
+				break;
+			case 'd':
+				optconnstring = strdup(optarg);
+				break;
+			case 'h':
+				printhelp(argv[0]);
+				return(EXIT_FAILURE);
+			default:
+				printhelp(argv[0]);
+				return(EXIT_FAILURE);
+		}
+	}
+
+    if(signal(SIGINT, &sighandler) == SIG_ERR) {
+        printf("Error: Can't catch SIGINT\n");
+        return(EXIT_FAILURE);
+    }
+
+    if(signal(SIGTERM, &sighandler) == SIG_ERR) {
+        printf("Error: Can't catch SIGTERM\n");
+        return(EXIT_FAILURE);
+    }
+
+	// Initialize libnfc and set the nfc_context
+	nfc_init(&context);
+	if(context == NULL) {
+		printf("Error: Unable to init libnfc (malloc)\n");
+		exit(EXIT_FAILURE);
+	}
+
+	if(optlistdev) {
+		listdevices();
+		nfc_exit(context);
+		return(EXIT_SUCCESS);
+	}
+
+	if(optconnstring) {
+		// Open, using specified NFC device
+		pnd = nfc_open(context, optconnstring);
+	} else {
+		// Open, using the first available NFC device which can be in order of selection:
+		//   - default device specified using environment variable or
+		//   - first specified device in libnfc.conf (/etc/nfc) or
+		//   - first specified device in device-configuration directory (/etc/nfc/devices.d) or
+		//   - first auto-detected (if feature is not disabled in libnfc.conf) device
+		pnd = nfc_open(context, NULL);
+	}
+
+	if(pnd == NULL) {
+		fprintf(stderr, "Error: Unable to open NFC device!\n");
+		exit(EXIT_FAILURE);
+	}
+
+	// Set opened NFC device to initiator mode
+	if(nfc_initiator_init(pnd) < 0) {
+		nfc_perror(pnd, "nfc_initiator_init");
+		exit(EXIT_FAILURE);
+	}
+
+	printf("NFC reader: %s opened\n", nfc_device_get_name(pnd));
+
+	if(nfc_initiator_select_passive_target(pnd, mod, NULL, 0, &nt) > 0) {
+		printf("%s (%s) tag found. UID: " CYAN,
+				str_nfc_modulation_type(mod.nmt), str_nfc_baud_rate(mod.nbr));
+		print_hex(nt.nti.nai.abtUid, nt.nti.nai.szUidLen);
+		printf(RESET "\n");
+	} else {
+		fprintf(stderr, "Error: No ISO14443A tag found!\n");
+		failquit();
+	}
 
 	apdu_inithistory(&fhistory);
 
 	while((in = readline("APDU> ")) != NULL) {
 		if(strlen(in) && !blankline(in)) {
 			apdu_addhistory(in);
-			// TODO
-			printf("%s -> %zu\n", in, strlen(in));
+			// TODO add commands : alias, history, quit, showconfig
+			if(strcardtransmit(pnd, in, resp, &respsz) < 0) {
+				fprintf(stderr, "cardtransmit error!\n");
+			}
 		}
 	}
 	printf("\n");
 
 	apdu_closehistory(fhistory);
 
-	return 0;
-
+	// Close NFC device
+	nfc_close(pnd);
+	// Release the context
+	nfc_exit(context);
+	return(EXIT_SUCCESS);
 }
