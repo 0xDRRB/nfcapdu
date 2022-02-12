@@ -1,11 +1,8 @@
 [general]
 histsize = 128
 
-# comment
-
 [aliases]
-selst25app = 00a4 0400 07 d2760000850101 00   
+selst25app = 00a4 0400 07 d2760000850101 00
 selstfile = 00a4 000c 02 e101
+selccfile = 00a4 000c 02 e103
 readstfile = 00b0 0000 12
-
-

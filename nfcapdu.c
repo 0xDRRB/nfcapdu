@@ -19,8 +19,42 @@
 #define RAPDUMAXSZ  512
 #define CAPDUMAXSZ  512
 
+
 nfc_device *pnd;
 nfc_context *context;
+int haveconfig;
+GKeyFile *ini;
+
+char **aliaskeys;
+gsize nbraliases;
+char **words;
+char *commands[] = { "quit", "alias", NULL };
+
+char *commands_generator(const char *text, int state)
+{
+	static int command_index, len;
+	char *command;
+
+	if(!state) {
+		command_index = 0;
+		len = strlen(text);
+	}
+
+	// search in wordlist
+	while((command = words[command_index++])) {
+		if(strncmp(command, text, len) == 0)
+			return strdup(command);
+	}
+
+	return NULL;
+}
+
+char **commands_completion(const char *text, int start, int end)
+{
+	// our list of completions is final - no path completion
+	rl_attempted_completion_over = 1;
+	return rl_completion_matches(text, commands_generator);
+}
 
 static void sighandler(int sig)
 {
@@ -33,7 +67,7 @@ static void sighandler(int sig)
     exit(EXIT_FAILURE);
 }
 
-int blankline(char *line)
+int isblankline(char *line)
 {
 	char *ch;
 	int is_blank = 1;
@@ -49,11 +83,10 @@ int blankline(char *line)
 }
 
 // return 1 if we have config
-int apfu_initconfig(GKeyFile **ini)
+int apfu_initconfig()
 {
 	char *home;
 	char *cfile;
-	GKeyFile *tmpini;
 	int confpathsz;
 	GError *err = NULL;
 
@@ -72,17 +105,16 @@ int apfu_initconfig(GKeyFile **ini)
 		fprintf(stderr, "Configuration file path error\n");
 	}
 
-	tmpini = g_key_file_new();
-	if(g_key_file_load_from_file(tmpini, cfile, G_KEY_FILE_KEEP_COMMENTS, &err) == FALSE) {
+	ini = g_key_file_new();
+	if(g_key_file_load_from_file(ini, cfile, G_KEY_FILE_KEEP_COMMENTS, &err) == FALSE) {
 		fprintf(stderr, "Error loading ini file: %s\n", err->message);
-		g_key_file_free(tmpini);
+		g_key_file_free(ini);
 		if(err != NULL) g_clear_error(&err);
 		free(cfile);
 		return(0);
 	}
 
 	free(cfile);
-	*ini = tmpini;
 
 	return(1);
 }
@@ -122,14 +154,16 @@ void apdu_inithistory(char **file)
 	*file = p;
 }
 
-void apdu_closehistory(char *file) {
+void apdu_closehistory(char *file)
+{
 	if(write_history(file) != 0) {
 		fprintf(stderr, "write history error: %s\n", strerror(errno));
 	}
 	free(file);
 }
 
-void apdu_addhistory(char *line) {
+void apdu_addhistory(char *line)
+{
 	HIST_ENTRY *entry = history_get(history_length);
 	if((!entry) || (strcmp(entry->line, line) != 0))
 		add_history(line);
@@ -230,7 +264,8 @@ int strcardtransmit(nfc_device *pnd, const char *line, uint8_t *rapdu, size_t *r
 	return(0);
 }
 
-int listdevices() {
+int listdevices()
+{
 	size_t device_count;
 	nfc_connstring devices[8];
 
@@ -265,6 +300,9 @@ static void print_hex(const uint8_t *pbtData, const size_t szBytes)
 
 void failquit()
 {
+	if(words) free(words);
+	if(aliaskeys) g_strfreev(aliaskeys);
+	if(ini) g_key_file_free(ini);
 	if(pnd) nfc_close(pnd);
 	if(context) nfc_exit(context);
 	exit(EXIT_SUCCESS);
@@ -279,6 +317,29 @@ void printhelp(char *binname)
 	printf(" -d connstring   use this device (default: use the first available device)\n");
 	printf(" -v              verbose mode\n");
 	printf(" -h              show this help\n");
+}
+
+void showaliases()
+{
+	int i = 0;
+	char *val;
+	GError *err = NULL;
+
+	if(!nbraliases || !haveconfig) {
+		printf("No alias\n");
+		return;
+	}
+
+	printf("Defined aliases:\n");
+	while(aliaskeys[i]) {
+		val = g_key_file_get_value(ini, "aliases", aliaskeys[i], &err);
+		if(err) {
+			g_clear_error(&err);
+		} else {
+			printf("  %s = %s%s\n", aliaskeys[i], val, strlen(val) == 0 ? "<empty!>" : "");
+		}
+		i++;
+	}
 }
 
 int main(int argc, char**argv)
@@ -300,12 +361,9 @@ int main(int argc, char**argv)
 	int optlistdev = 0;
 	char *optconnstring = NULL;
 
-	int haveconfig = 0;
-	GKeyFile *ini = NULL;
 	GError *err = NULL;
-	gsize nbraliases;
-	char **aliaskeys;
 	char *aliasval;
+	int nbr_commands = 0;
 
 	while((retopt = getopt(argc, argv, "hld:")) != -1) {
 		switch (retopt) {
@@ -347,6 +405,9 @@ int main(int argc, char**argv)
 		return(EXIT_SUCCESS);
 	}
 
+	// load configuration
+	haveconfig = apfu_initconfig();
+
 	if(optconnstring) {
 		// Open, using specified NFC device
 		pnd = nfc_open(context, optconnstring);
@@ -383,34 +444,54 @@ int main(int argc, char**argv)
 	}
 
 	// show aliases & load readline completion
-	// load configuration
-	haveconfig = apfu_initconfig(&ini);
-
 	if(haveconfig) {
-		if(g_key_file_has_group(ini, "aliases")) {
-			aliaskeys = g_key_file_get_keys(ini, "aliases", &nbraliases, &err);
-			if(err) {
-				fprintf(stderr, "%s\n", err->message);
-				g_clear_error(&err);
-			} else {
-				printf("%lu aliases loaded\n", nbraliases);
-				g_strfreev(aliaskeys);
+		aliaskeys = g_key_file_get_keys(ini, "aliases", &nbraliases, &err);
+		if(err) {
+			fprintf(stderr, "%s\n", err->message);
+			g_clear_error(&err);
+		} else {
+			printf("%lu aliases loaded\n", nbraliases);
+			// merge commands with aliase to wordslist
+			while(commands[nbr_commands]) nbr_commands++;
+			if((words = malloc(sizeof(char *) * (nbr_commands+nbraliases+1))) == NULL) {
+				fprintf(stderr, "Words Malloc Error: %s\n", strerror(errno));
+				failquit();
 			}
+			int i=0;
+			while(commands[i]) {
+				words[i] = commands[i];
+				i++;
+			}
+			int j=0;
+			while(aliaskeys[j]) {
+				words[i] = aliaskeys[j];
+				i++; j++;
+			}
+			words[i] = 0;
 		}
 	}
 
 	// Load commands history
 	apdu_inithistory(&fhistory);
 
+	// Enable completion
+	rl_attempted_completion_function = commands_completion;
+
 	while((in = readline("APDU> ")) != NULL) {
-		if(strlen(in) && !blankline(in)) {
+		if(strlen(in) && !isblankline(in)) {
+			// strip whitespace
+			g_strstrip(in);
+			// add to commands history
 			apdu_addhistory(in);
-			// TODO add commands : alias, history, quit, showconfig
-			// FIXME trailing space alias
-			// FIXME quotes
-			// TODO add completion
-			if(!haveconfig) {
-				// nos config file
+			if(strcmp(in, "alias") == 0) {
+				showaliases();
+				continue;
+			}
+			if(strcmp(in, "quit") == 0) {
+				break;
+			}
+			if(!nbraliases) {
+				// no alias in config file
 				if(strcardtransmit(pnd, in, resp, &respsz) < 0) {
 					fprintf(stderr, "cardtransmit error!\n");
 				}
@@ -425,9 +506,12 @@ int main(int argc, char**argv)
 					g_clear_error(&err);
 				} else if(!strlen(aliasval)) {
 					// alias resolv to ""
+					printf("This alias resolv to an empty string. Fix your "CONFFILE" please.\n");
+					/*
 					if(strcardtransmit(pnd, in, resp, &respsz) < 0) {
 						fprintf(stderr, "cardtransmit error!\n");
 					}
+					*/
 				} else {
 					// alias found, use that
 					if(strcardtransmit(pnd, aliasval, resp, &respsz) < 0) {
@@ -440,8 +524,13 @@ int main(int argc, char**argv)
 	printf("\n");
 
 	apdu_closehistory(fhistory);
-	if(haveconfig)
-		g_key_file_free(ini);
+
+	if(haveconfig) {
+		if(aliaskeys) g_strfreev(aliaskeys);
+		if(ini) g_key_file_free(ini);
+	}
+
+	if(words) free(words);
 
 	// Close NFC device
 	nfc_close(pnd);
