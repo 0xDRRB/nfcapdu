@@ -1,7 +1,7 @@
 TARGET  := nfcapdu
 WARN    := -Wall
-CFLAGS  := -O2 ${WARN} `pkg-config --cflags libnfc`
-LDFLAGS := `pkg-config --libs libnfc` -lreadline
+CFLAGS  := -O2 ${WARN} `pkg-config --cflags libnfc glib-2.0`
+LDFLAGS := `pkg-config --libs libnfc glib-2.0`  -lreadline
 CC      := gcc
 
 C_SRCS    = $(wildcard *.c)

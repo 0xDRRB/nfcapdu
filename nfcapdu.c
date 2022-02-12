@@ -7,11 +7,13 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 #include <nfc/nfc.h>
+#include <glib.h>
 
 #include "color.h"
 #include "nfcapdu.h"
 #include "statusres.h"
 
+#define CONFFILE    ".nfcapdurc"
 #define HISTFILE    ".nfcapdu_history"
 #define HISTSIZE    128
 #define RAPDUMAXSZ  512
@@ -46,7 +48,47 @@ int blankline(char *line)
 	return is_blank;
 }
 
-void apdu_inithistory(char **file) {
+// return 1 if we have config
+int apfu_initconfig(GKeyFile **ini)
+{
+	char *home;
+	char *cfile;
+	GKeyFile *tmpini;
+	int confpathsz;
+	GError *err = NULL;
+
+	if((home=getenv("HOME")) == NULL) {
+		fprintf(stderr, "Unable to get $HOME\n");
+		exit(EXIT_FAILURE);
+	}
+
+	confpathsz = strlen(home)+1+strlen(CONFFILE)+1;
+	if((cfile=(char *) malloc(confpathsz)) == NULL) {
+		fprintf(stderr, "Memory allocation error: %s\n", strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+
+	if(snprintf(cfile, confpathsz, "%s/%s", home, CONFFILE) != confpathsz-1) {
+		fprintf(stderr, "Configuration file path error\n");
+	}
+
+	tmpini = g_key_file_new();
+	if(g_key_file_load_from_file(tmpini, cfile, G_KEY_FILE_KEEP_COMMENTS, &err) == FALSE) {
+		fprintf(stderr, "Error loading ini file: %s\n", err->message);
+		g_key_file_free(tmpini);
+		if(err != NULL) g_clear_error(&err);
+		free(cfile);
+		return(0);
+	}
+
+	free(cfile);
+	*ini = tmpini;
+
+	return(1);
+}
+
+void apdu_inithistory(char **file)
+{
 	char *home;
 	char *p;
 	int histpathsz;
@@ -131,6 +173,7 @@ int strcardtransmit(nfc_device *pnd, const char *line, uint8_t *rapdu, size_t *r
         } else {
             // if we have symbols other than spaces and hex
 			free(capdu);
+			printf("Invalid hex string! No matching alias.\n");
             return(-1);
         }
 
@@ -257,6 +300,13 @@ int main(int argc, char**argv)
 	int optlistdev = 0;
 	char *optconnstring = NULL;
 
+	int haveconfig = 0;
+	GKeyFile *ini = NULL;
+	GError *err = NULL;
+	gsize nbraliases;
+	char **aliaskeys;
+	char *aliasval;
+
 	while((retopt = getopt(argc, argv, "hld:")) != -1) {
 		switch (retopt) {
 			case 'l':
@@ -332,20 +382,66 @@ int main(int argc, char**argv)
 		failquit();
 	}
 
+	// show aliases & load readline completion
+	// load configuration
+	haveconfig = apfu_initconfig(&ini);
+
+	if(haveconfig) {
+		if(g_key_file_has_group(ini, "aliases")) {
+			aliaskeys = g_key_file_get_keys(ini, "aliases", &nbraliases, &err);
+			if(err) {
+				fprintf(stderr, "%s\n", err->message);
+				g_clear_error(&err);
+			} else {
+				printf("%lu aliases loaded\n", nbraliases);
+				g_strfreev(aliaskeys);
+			}
+		}
+	}
+
+	// Load commands history
 	apdu_inithistory(&fhistory);
 
 	while((in = readline("APDU> ")) != NULL) {
 		if(strlen(in) && !blankline(in)) {
 			apdu_addhistory(in);
 			// TODO add commands : alias, history, quit, showconfig
-			if(strcardtransmit(pnd, in, resp, &respsz) < 0) {
-				fprintf(stderr, "cardtransmit error!\n");
+			// FIXME trailing space alias
+			// FIXME quotes
+			// TODO add completion
+			if(!haveconfig) {
+				// nos config file
+				if(strcardtransmit(pnd, in, resp, &respsz) < 0) {
+					fprintf(stderr, "cardtransmit error!\n");
+				}
+			} else {
+				// look for alias
+				aliasval = g_key_file_get_value(ini, "aliases", in, &err);
+				if(err) {
+					// alias not found
+					if(strcardtransmit(pnd, in, resp, &respsz) < 0) {
+						fprintf(stderr, "cardtransmit error!\n");
+					}
+					g_clear_error(&err);
+				} else if(!strlen(aliasval)) {
+					// alias resolv to ""
+					if(strcardtransmit(pnd, in, resp, &respsz) < 0) {
+						fprintf(stderr, "cardtransmit error!\n");
+					}
+				} else {
+					// alias found, use that
+					if(strcardtransmit(pnd, aliasval, resp, &respsz) < 0) {
+						fprintf(stderr, "cardtransmit error!\n");
+					}
+				}
 			}
 		}
 	}
 	printf("\n");
 
 	apdu_closehistory(fhistory);
+	if(haveconfig)
+		g_key_file_free(ini);
 
 	// Close NFC device
 	nfc_close(pnd);
