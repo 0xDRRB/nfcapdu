@@ -1,12 +1,14 @@
 # nfcapdu
 A simple tool to exchange APDUs with an RFID/NFC tag
 
-This program allows you to create an interactive session to send APDUs to a tag and receive responses.
+This program allows you to create an interactive session to send APDUs to a tag and receive responses. I wrote this to easily experiment around ST25TA tags and test APDUs before developing more specific code. Maybe this can be useful for someone else.
 
-- It supports the creation of aliases (defined in `~/.nfcapdurc`) to simplify the sending of common commands (Glib)
-- APDU history is kept between sessions (in `~/.nfcapdu_history`) (readline)
+- It supports the creation of aliases (defined in `~/.nfcapdurc`) to simplify the sending of common commands
+- APDU history is kept between sessions (in `~/.nfcapdu_history`)
+- Have completion for commands and aliases
 - You can set default modulation and baud rate in config file (see `nfcapdurc_sample`)
 - You can enable or disable colors in config file (see `nfcapdurc_sample`)
+- Quit with `quit` or Ctrl+d (EOF)
 
 
 ```
