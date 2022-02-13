@@ -327,7 +327,6 @@ void printhelp(char *binname)
 	printf("Usage : %s [OPTIONS]\n", binname);
 	printf(" -l              list available readers\n");
 	printf(" -d connstring   use this device (default: use the first available device)\n");
-	printf(" -v              verbose mode\n");
 	printf(" -h              show this help\n");
 }
 
