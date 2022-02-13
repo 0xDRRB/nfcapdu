@@ -30,7 +30,7 @@ gsize nbraliases;
 char **words;
 char *commands[] = { "quit", "alias", NULL };
 
-char *commands_generator(const char *text, int state)
+char *rl_commands_generator(const char *text, int state)
 {
 	static int command_index, len;
 	char *command;
@@ -49,11 +49,11 @@ char *commands_generator(const char *text, int state)
 	return NULL;
 }
 
-char **commands_completion(const char *text, int start, int end)
+char **rl_commands_completion(const char *text, int start, int end)
 {
 	// our list of completions is final - no path completion
 	rl_attempted_completion_over = 1;
-	return rl_completion_matches(text, commands_generator);
+	return rl_completion_matches(text, rl_commands_generator);
 }
 
 static void sighandler(int sig)
@@ -337,6 +337,7 @@ void showaliases()
 			g_clear_error(&err);
 		} else {
 			printf("  %s = %s%s\n", aliaskeys[i], val, strlen(val) == 0 ? "<empty!>" : "");
+			g_free(val);
 		}
 		i++;
 	}
@@ -408,6 +409,12 @@ int main(int argc, char**argv)
 	// load configuration
 	haveconfig = apfu_initconfig();
 
+	// TODO :
+	// histsize
+	// capdu buff
+	// rapdu buff
+	// color
+
 	if(optconnstring) {
 		// Open, using specified NFC device
 		pnd = nfc_open(context, optconnstring);
@@ -451,7 +458,7 @@ int main(int argc, char**argv)
 			g_clear_error(&err);
 		} else {
 			printf("%lu aliases loaded\n", nbraliases);
-			// merge commands with aliase to wordslist
+			// merge commands to aliases to completion wordslist
 			while(commands[nbr_commands]) nbr_commands++;
 			if((words = malloc(sizeof(char *) * (nbr_commands+nbraliases+1))) == NULL) {
 				fprintf(stderr, "Words Malloc Error: %s\n", strerror(errno));
@@ -475,7 +482,7 @@ int main(int argc, char**argv)
 	apdu_inithistory(&fhistory);
 
 	// Enable completion
-	rl_attempted_completion_function = commands_completion;
+	rl_attempted_completion_function = rl_commands_completion;
 
 	while((in = readline("APDU> ")) != NULL) {
 		if(strlen(in) && !isblankline(in)) {
@@ -507,19 +514,16 @@ int main(int argc, char**argv)
 				} else if(!strlen(aliasval)) {
 					// alias resolv to ""
 					printf("This alias resolv to an empty string. Fix your "CONFFILE" please.\n");
-					/*
-					if(strcardtransmit(pnd, in, resp, &respsz) < 0) {
-						fprintf(stderr, "cardtransmit error!\n");
-					}
-					*/
 				} else {
 					// alias found, use that
 					if(strcardtransmit(pnd, aliasval, resp, &respsz) < 0) {
 						fprintf(stderr, "cardtransmit error!\n");
 					}
 				}
+				g_free(aliasval);
 			}
 		}
+		if(in) free(in);
 	}
 	printf("\n");
 

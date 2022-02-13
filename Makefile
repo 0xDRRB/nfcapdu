@@ -1,6 +1,7 @@
 TARGET  := nfcapdu
 WARN    := -Wall
-CFLAGS  := -O2 ${WARN} `pkg-config --cflags libnfc glib-2.0`
+#DEBUG	:= -g
+CFLAGS  := -O2 $(DEBUG) ${WARN} `pkg-config --cflags libnfc glib-2.0`
 LDFLAGS := `pkg-config --libs libnfc glib-2.0`  -lreadline
 CC      := gcc
 
