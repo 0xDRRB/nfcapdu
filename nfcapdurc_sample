@@ -25,7 +25,6 @@ color = true
 modtype = NMT_ISO14443A
 
 # Baud rate :
-#   NBR_UNDEFINED
 #   NBR_106
 #   NBR_212
 #   NBR_424

@@ -16,8 +16,6 @@
 #define CONFFILE    ".nfcapdurc"
 #define HISTFILE    ".nfcapdu_history"
 
-
-
 #define HISTSIZE             128
 #define RAPDUMAXSZ           512
 #define CAPDUMAXSZ           512
@@ -364,7 +362,7 @@ int main(int argc, char**argv)
 
 	nfc_target nt;
 
-	const nfc_modulation mod = {
+	nfc_modulation mod = {
 		.nmt = NMT_ISO14443A,
 		.nbr = NBR_106
 	};
@@ -382,6 +380,9 @@ int main(int argc, char**argv)
 
 	// FIXME not pretty
 	int wordsneedfree = 0;
+
+	char *conf_mod;
+	char *conf_nbr;
 
 	while((retopt = getopt(argc, argv, "hld:")) != -1) {
 		switch (retopt) {
@@ -477,7 +478,59 @@ int main(int argc, char**argv)
 		}
 	}
 
-	// TODO modulation config from file
+	// get modulation type from config file
+	if(haveconfig) {
+		conf_mod = g_key_file_get_string(ini, "general", "modtype", &err);
+		if(err) {
+			g_clear_error(&err);
+		} else {
+			g_strstrip(conf_mod);
+			if(strcmp(conf_mod, "NMT_ISO14443A") == 0)
+				mod.nmt = NMT_ISO14443A;
+			else if (strcmp(conf_mod, "NMT_JEWEL") == 0)
+				mod.nmt = NMT_JEWEL;
+			else if (strcmp(conf_mod, "NMT_ISO14443B") == 0)
+				mod.nmt = NMT_ISO14443B;
+			else if (strcmp(conf_mod, "NMT_ISO14443BI") == 0)
+				mod.nmt = NMT_ISO14443BI;
+			else if (strcmp(conf_mod, "NMT_ISO14443B2SR") == 0)
+				mod.nmt = NMT_ISO14443B2SR;
+			else if (strcmp(conf_mod, "NMT_ISO14443B2CT") == 0)
+				mod.nmt = NMT_ISO14443B2CT;
+			else if (strcmp(conf_mod, "NMT_FELICA") == 0)
+				mod.nmt = NMT_FELICA;
+			else if (strcmp(conf_mod, "NMT_DEP") == 0)
+				mod.nmt = NMT_DEP;
+			else if (strcmp(conf_mod, "NMT_BARCODE") == 0)
+				mod.nmt = NMT_BARCODE;
+			else if (strcmp(conf_mod, "NMT_ISO14443BICLASS") == 0)
+				mod.nmt = NMT_ISO14443BICLASS;
+			else
+				fprintf(stderr, "Invalid 'modtype' in configuration file. Using default (NMT_ISO14443A).\n");
+			g_free(conf_mod);
+		}
+	}
+
+	// get baud rate from config file
+	if(haveconfig) {
+		conf_nbr = g_key_file_get_string(ini, "general", "baudrate", &err);
+		if(err) {
+			g_clear_error(&err);
+		} else {
+			g_strstrip(conf_nbr);
+			if(strcmp(conf_nbr, "NBR_106") == 0)
+				mod.nbr = NBR_106;
+			else if(strcmp(conf_nbr, "NBR_212") == 0)
+				mod.nbr = NBR_212;
+			else if(strcmp(conf_nbr, "NBR_424") == 0)
+				mod.nbr = NBR_424;
+			else if(strcmp(conf_nbr, "NBR_847") == 0)
+				mod.nbr = NBR_847;
+			else
+				fprintf(stderr, "Invalid 'baudrate' in configuration file. Using default (NBR_106).\n");
+			g_free(conf_nbr);
+		}
+	}
 
 	if(optconnstring) {
 		// Open, using specified NFC device
@@ -502,7 +555,7 @@ int main(int argc, char**argv)
 		exit(EXIT_FAILURE);
 	}
 
-	printf("NFC reader: %s opened\n", nfc_device_get_name(pnd));
+	printf("NFC reader: %s (%s) opened\n", nfc_device_get_name(pnd), nfc_device_get_connstring(pnd));
 
 	if(nfc_initiator_select_passive_target(pnd, mod, NULL, 0, &nt) > 0) {
 		printf("%s (%s) tag found. UID: %s",
@@ -510,7 +563,7 @@ int main(int argc, char**argv)
 		print_hex(nt.nti.nai.abtUid, nt.nti.nai.szUidLen);
 		printf("%s\n", conf_color ? RESET : "");
 	} else {
-		fprintf(stderr, "Error: No ISO14443A tag found!\n");
+		fprintf(stderr, "Error: No %s (%s) tag found!\n", str_nfc_modulation_type(mod.nmt), str_nfc_baud_rate(mod.nbr));
 		failquit();
 	}
 
@@ -563,6 +616,7 @@ int main(int argc, char**argv)
 				continue;
 			}
 			if(strcmp(in, "quit") == 0) {
+				if(in) free(in);
 				break;
 			}
 			if(!nbraliases) {
