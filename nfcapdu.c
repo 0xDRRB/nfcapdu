@@ -15,10 +15,24 @@
 
 #define CONFFILE    ".nfcapdurc"
 #define HISTFILE    ".nfcapdu_history"
-#define HISTSIZE    128
-#define RAPDUMAXSZ  512
-#define CAPDUMAXSZ  512
 
+
+
+#define HISTSIZE             128
+#define RAPDUMAXSZ           512
+#define CAPDUMAXSZ           512
+#define COLOR                  1
+#define MODTYPE    NMT_ISO14443A
+#define NBR              NBR_106
+
+// Default conf values
+int conf_histsize = HISTSIZE;
+size_t conf_rapdumaxsz = RAPDUMAXSZ;
+size_t conf_capdumaxsz = CAPDUMAXSZ;
+int conf_color = COLOR;
+
+nfc_modulation_type conf_modtype = MODTYPE;
+nfc_baud_rate conf_nbr = NBR;
 
 nfc_device *pnd;
 nfc_context *context;
@@ -149,7 +163,7 @@ void apdu_inithistory(char **file)
 		}
 	}
 
-	stifle_history(HISTSIZE);
+	stifle_history(conf_histsize);
 
 	*file = p;
 }
@@ -176,7 +190,7 @@ int strcardtransmit(nfc_device *pnd, const char *line, uint8_t *rapdu, size_t *r
     size_t szPos;
 	uint8_t *capdu = NULL;
 	size_t capdulen = 0;
-	*rapdulen = RAPDUMAXSZ;
+	*rapdulen = conf_rapdumaxsz;
 
 	uint32_t temp;
 	int indx = 0;
@@ -185,7 +199,7 @@ int strcardtransmit(nfc_device *pnd, const char *line, uint8_t *rapdu, size_t *r
 	uint16_t status;
 
 	// linelen >0 & even
-	if(!strlen(line) || strlen(line) > CAPDUMAXSZ*2)
+	if(!strlen(line) || strlen(line) > conf_capdumaxsz*2)
 		return(-1);
 
 	if(!(capdu = malloc(strlen(line)/2))) {
@@ -227,11 +241,11 @@ int strcardtransmit(nfc_device *pnd, const char *line, uint8_t *rapdu, size_t *r
 		return(-1);
 	}
 
-	printf(YELLOW "=> " );
+	printf("%s=> ", conf_color ? YELLOW : "" );
 	for (szPos = 0; szPos < capdulen; szPos++) {
 		printf("%02x ", capdu[szPos]);
 	}
-	printf(RESET "\n");
+	printf("%s\n", conf_color ? RESET : "");
 
     if((res = nfc_initiator_transceive_bytes(pnd, capdu, capdulen, rapdu, *rapdulen, -1)) < 0) {
         printf("nfc_initiator_transceive_bytes error! %s\n", nfc_strerror(pnd));
@@ -244,15 +258,15 @@ int strcardtransmit(nfc_device *pnd, const char *line, uint8_t *rapdu, size_t *r
 	status = (rapdu[res-2] << 8) | rapdu[res-1];
 
 	if(status == S_SUCCESS) {
-		printf(GREEN "<= ");
+		printf("%s<= ", conf_color ? GREEN : "");
 	} else {
-		printf(RED "<= ");
+		printf("%s<= ", conf_color ? RED : "");
 	}
 
 	for (szPos = 0; szPos < res; szPos++) {
 		printf("%02x ", rapdu[szPos]);
 	}
-	printf(RESET "\n");
+	printf("%s\n", conf_color ? RESET : "");
 
 	if(status != S_SUCCESS) {
 		printf("Error: %s (0x%04x)\n", strstatus(status), status);
@@ -349,14 +363,14 @@ int main(int argc, char**argv)
 	char *fhistory;
 
 	nfc_target nt;
+
 	const nfc_modulation mod = {
 		.nmt = NMT_ISO14443A,
 		.nbr = NBR_106
 	};
 
-	// TODO config file or cmd
-	uint8_t resp[RAPDUMAXSZ] = {0};
-	size_t respsz = RAPDUMAXSZ;
+	uint8_t *resp;
+	size_t respsz;
 
 	int retopt;
 	int optlistdev = 0;
@@ -365,6 +379,9 @@ int main(int argc, char**argv)
 	GError *err = NULL;
 	char *aliasval;
 	int nbr_commands = 0;
+
+	// FIXME not pretty
+	int wordsneedfree = 0;
 
 	while((retopt = getopt(argc, argv, "hld:")) != -1) {
 		switch (retopt) {
@@ -409,11 +426,58 @@ int main(int argc, char**argv)
 	// load configuration
 	haveconfig = apfu_initconfig();
 
-	// TODO :
-	// histsize
-	// capdu buff
-	// rapdu buff
-	// color
+	// get command history from config file (or use default)
+	if(haveconfig) {
+		conf_histsize = g_key_file_get_integer(ini, "general", "histsize", &err);
+		if(err) {
+			if(err->code == G_KEY_FILE_ERROR_INVALID_VALUE)
+				fprintf(stderr, "Invalid value for 'histsize' in configuration file. Using default.\n");
+			conf_histsize = HISTSIZE;
+			g_clear_error(&err);
+		}
+	}
+
+	// get color enable from config file (or use default)
+	if(haveconfig) {
+		conf_color = g_key_file_get_boolean(ini, "general", "color", &err);
+		if(err) {
+			if(err->code == G_KEY_FILE_ERROR_INVALID_VALUE)
+				fprintf(stderr, "Invalid boolean for 'color' in configuration file. Using default.\n");
+			conf_color = COLOR;
+			g_clear_error(&err);
+		}
+	}
+
+	// get max size of response APDU buffer from config file (or use default)
+	if(haveconfig) {
+		conf_rapdumaxsz = g_key_file_get_integer(ini, "general", "rapdumaxsz", &err);
+		if(err) {
+			if(err->code == G_KEY_FILE_ERROR_INVALID_VALUE)
+				fprintf(stderr, "Invalid value for 'rapdumaxsz' in configuration file. Using default.\n");
+			conf_rapdumaxsz = RAPDUMAXSZ;
+			g_clear_error(&err);
+		}
+	}
+
+	// allocate R-APDU buffer
+	if((resp = malloc(sizeof(uint8_t) * conf_rapdumaxsz)) == NULL) {
+		fprintf(stderr, "resp[] Malloc Error: %s\n", strerror(errno));
+		failquit();
+	}
+	respsz = conf_rapdumaxsz;
+
+	// get max size of command APDU buffer from config file (or use default)
+	if(haveconfig) {
+		conf_capdumaxsz = g_key_file_get_integer(ini, "general", "capdumaxsz", &err);
+		if(err) {
+			if(err->code == G_KEY_FILE_ERROR_INVALID_VALUE)
+				fprintf(stderr, "Invalid value for 'capdumaxsz' in configuration file. Using default.\n");
+			conf_capdumaxsz = CAPDUMAXSZ;
+			g_clear_error(&err);
+		}
+	}
+
+	// TODO modulation config from file
 
 	if(optconnstring) {
 		// Open, using specified NFC device
@@ -441,10 +505,10 @@ int main(int argc, char**argv)
 	printf("NFC reader: %s opened\n", nfc_device_get_name(pnd));
 
 	if(nfc_initiator_select_passive_target(pnd, mod, NULL, 0, &nt) > 0) {
-		printf("%s (%s) tag found. UID: " CYAN,
-				str_nfc_modulation_type(mod.nmt), str_nfc_baud_rate(mod.nbr));
+		printf("%s (%s) tag found. UID: %s",
+				str_nfc_modulation_type(mod.nmt), str_nfc_baud_rate(mod.nbr), conf_color ? CYAN : "");
 		print_hex(nt.nti.nai.abtUid, nt.nti.nai.szUidLen);
-		printf(RESET "\n");
+		printf("%s\n", conf_color ? RESET : "");
 	} else {
 		fprintf(stderr, "Error: No ISO14443A tag found!\n");
 		failquit();
@@ -455,6 +519,7 @@ int main(int argc, char**argv)
 		aliaskeys = g_key_file_get_keys(ini, "aliases", &nbraliases, &err);
 		if(err) {
 			fprintf(stderr, "%s\n", err->message);
+			words = commands;
 			g_clear_error(&err);
 		} else {
 			printf("%lu aliases loaded\n", nbraliases);
@@ -475,7 +540,10 @@ int main(int argc, char**argv)
 				i++; j++;
 			}
 			words[i] = 0;
+			wordsneedfree = 1; // enable free(words) when we quit
 		}
+	} else {
+		words = commands;
 	}
 
 	// Load commands history
@@ -534,7 +602,7 @@ int main(int argc, char**argv)
 		if(ini) g_key_file_free(ini);
 	}
 
-	if(words) free(words);
+	if(words && wordsneedfree) free(words);
 
 	// Close NFC device
 	nfc_close(pnd);

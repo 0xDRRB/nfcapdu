@@ -1,8 +1,45 @@
 [general]
+# commands history zise
 histsize = 128
 
+# Maximum size of APDU send buffer
+capdumaxsz = 512
+
+# Maximum size of APDU receive buffer
+rapdumaxsz = 512
+
+# Use colors or BW output
+color = true
+
+# Modulation type :
+#   NMT_ISO14443A
+#   NMT_JEWEL
+#   NMT_ISO14443B
+#   NMT_ISO14443BI (pre-ISO14443B aka ISO/IEC 14443 B' or Type B')
+#   NMT_ISO14443B2SR (ISO14443-2B ST SRx)
+#   NMT_ISO14443B2CT (ISO14443-2B ASK CTx)
+#   NMT_FELICA
+#   NMT_DEP
+#   NMT_BARCODE (Thinfilm NFC Barcode)
+#   NMT_ISO14443BICLASS (HID iClass 14443B mode)
+modtype = NMT_ISO14443A
+
+# Baud rate :
+#   NBR_UNDEFINED
+#   NBR_106
+#   NBR_212
+#   NBR_424
+#   NBR_847
+baudrate = NBR_106
+
+
+# Defined APDU aliases
 [aliases]
+# ST25TA select NFC application
 selst25app = 00a4 0400 07 d2760000850101 00
+# ST25TA select ST system file
 selstfile = 00a4 000c 02 e101
+# ST25TA select CC file
 selccfile = 00a4 000c 02 e103
+# ST25TA read CC file (15 bytes)
 readstfile = 00b0 0000 12
