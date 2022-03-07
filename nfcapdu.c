@@ -40,7 +40,7 @@ GKeyFile *ini;
 char **aliaskeys;
 gsize nbraliases;
 char **words;
-char *commands[] = { "quit", "alias", NULL };
+char *commands[] = { "quit", "alias", "history", NULL };
 
 char *rl_commands_generator(const char *text, int state)
 {
@@ -179,6 +179,16 @@ void apdu_addhistory(char *line)
 	HIST_ENTRY *entry = history_get(history_length);
 	if((!entry) || (strcmp(entry->line, line) != 0))
 		add_history(line);
+}
+
+void apdu_disphist()
+{
+	int i;
+	HIST_ENTRY **hist = history_list();
+
+	for(i=0; i<history_length; i++) {
+		printf("  %s\n", hist[i]->line);
+	}
 }
 
 // Transmit ADPU from hex string
@@ -612,10 +622,17 @@ int main(int argc, char**argv)
 			apdu_addhistory(in);
 			if(strcmp(in, "alias") == 0) {
 				showaliases();
+				free(in);
 				continue;
 			}
+			if(strcmp(in, "history") == 0) {
+				apdu_disphist();
+				free(in);
+				continue;
+			}
+
 			if(strcmp(in, "quit") == 0) {
-				if(in) free(in);
+				free(in);
 				break;
 			}
 			if(!nbraliases) {
