@@ -1,6 +1,8 @@
 #pragma once
 
 #define S_SUCCESS       0x9000  // Command completed successfully
+#define S_OK            0x9100  // OK (after additional data frame)
+#define S_MORE          0x91af  // Additional data frame is expected to be sent
 
 char *commands_generator(const char *text, int state);
 char **commands_completion(const char *text, int start, int end);

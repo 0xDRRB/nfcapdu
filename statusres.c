@@ -1,6 +1,8 @@
 #include <stdint.h>
 #include "statusres.h"
 
+// https://www.eftlab.com/knowledge-base/complete-list-of-apdu-responses/
+
 const char *strstatus(uint16_t code) {
 	switch(code) {
 		case 0x6200: return("No information given (NV-Ram not changed)");

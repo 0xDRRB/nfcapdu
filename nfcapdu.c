@@ -265,18 +265,22 @@ int strcardtransmit(nfc_device *pnd, const char *line, uint8_t *rapdu, size_t *r
 
 	status = (rapdu[res-2] << 8) | rapdu[res-1];
 
-	if(status == S_SUCCESS) {
+	if(status == S_SUCCESS || status == S_OK || status == S_MORE) {
 		printf("%s<= ", conf_color ? GREEN : "");
 	} else {
 		printf("%s<= ", conf_color ? RED : "");
 	}
 
 	for (szPos = 0; szPos < res; szPos++) {
+		if(szPos>=res-2) printf(BOLDGREEN);
 		printf("%02x ", rapdu[szPos]);
 	}
+
+	if(status == S_MORE)
+		printf("  ()");
 	printf("%s\n", conf_color ? RESET : "");
 
-	if(status != S_SUCCESS) {
+	if(status != S_SUCCESS && status != S_OK && status != S_MORE) {
 		printf("Error: %s (0x%04x)\n", strstatus(status), status);
 		return(-1);
 	}
