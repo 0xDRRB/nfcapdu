@@ -119,7 +119,8 @@ int apfu_initconfig()
 
 	ini = g_key_file_new();
 	if(g_key_file_load_from_file(ini, cfile, G_KEY_FILE_KEEP_COMMENTS, &err) == FALSE) {
-		fprintf(stderr, "Error loading ini file: %s\n", err->message);
+		if(err->code != G_FILE_ERROR_NOENT)
+			fprintf(stderr, "Error loading config file: %s (%d)\n", err->message, err->code);
 		g_key_file_free(ini);
 		if(err != NULL) g_clear_error(&err);
 		free(cfile);
