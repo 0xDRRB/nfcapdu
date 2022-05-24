@@ -40,7 +40,7 @@ GKeyFile *ini;
 char **aliaskeys;
 gsize nbraliases;
 char **words;
-char *commands[] = { "quit", "alias", "history", NULL };
+char *commands[] = { "quit", "alias", "history", "help", NULL };
 
 char *rl_commands_generator(const char *text, int state)
 {
@@ -190,6 +190,16 @@ void apdu_disphist()
 	for(i=0; i<history_length; i++) {
 		printf("  %s\n", hist[i]->line);
 	}
+}
+
+void apdu_help()
+{
+	printf("Commands:\n");
+	printf("        alias - shows the aliases defined in ~/.nfcapdyrc\n");
+	printf("      history - display command history\n");
+	printf(" quit (or ^D) - exit program\n");
+	printf("         help - this\n");
+	printf("anything else - treated as an APDU to send in hex (blanks are ignored)\n\n");
 }
 
 // Transmit ADPU from hex string
@@ -438,6 +448,8 @@ int main(int argc, char**argv)
 		return(EXIT_SUCCESS);
 	}
 
+	printf("NFCapdu v0.0.1 - Copyright (c) 2022 - Denis Bodor\nThis is free software with ABSOLUTELY NO WARRANTY.\n");
+
 	// load configuration
 	haveconfig = apfu_initconfig();
 
@@ -589,7 +601,7 @@ int main(int argc, char**argv)
 			words = commands;
 			g_clear_error(&err);
 		} else {
-			printf("%lu aliases loaded\n", nbraliases);
+			printf("%lu alias%s loaded\n", nbraliases, nbraliases>1 ? "" : "");
 			// merge commands to aliases to completion wordslist
 			while(commands[nbr_commands]) nbr_commands++;
 			if((words = malloc(sizeof(char *) * (nbr_commands+nbraliases+1))) == NULL) {
@@ -613,6 +625,8 @@ int main(int argc, char**argv)
 		words = commands;
 	}
 
+	printf("Use 'help' to get a list of available commands.\n");
+
 	// Load commands history
 	apdu_inithistory(&fhistory);
 
@@ -635,7 +649,11 @@ int main(int argc, char**argv)
 				free(in);
 				continue;
 			}
-
+			if(strcmp(in, "help") == 0) {
+				apdu_help();
+				free(in);
+				continue;
+			}
 			if(strcmp(in, "quit") == 0) {
 				free(in);
 				break;
